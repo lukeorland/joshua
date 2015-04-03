@@ -380,6 +380,28 @@ def handle_args(clargs):
              'Joshua, all surrounded by one pair of quotes.'
     )
     parser.add_argument(
+        '--prepare-inputs', action='store_true',
+        help='print informational messages'
+    )
+
+    parser.add_argument(
+        '--prepare-inputs', dest='prepare_inputs', action='store_true',
+        help='each input will be redirected through a script that '
+             'preprocesses the text (enabled by default)'
+    )
+    parser.add_argument(
+        '--no-prepare-inputs', dest='prepare_inputs', action='store_false',
+        help='disable redirecting each input through a preprocessing script'
+    )
+    parser.set_defaults(prepare_inputs=True)
+    parser.add_argument(
+        '--prepare-inputs-script', dest='prepare_inputs_script',
+        default='./prepare.sh',
+        help='The preprocessing script that each input will be redirected '
+             'through (./prepare.sh by default)'
+    )
+
+    parser.add_argument(
         '-v', '--verbose', action='store_true',
         help='print informational messages'
     )
