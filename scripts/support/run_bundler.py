@@ -416,15 +416,71 @@ def process_line_containing_path(line, orig_dir, dest_dir):
     return line, operation
 
 
-def process_line_containing_grammar(line, orig_dir, dest_dir):
+def process_line_containing_grammar(grammar_conf_line, orig_dir, dest_dir,
+                                    grammar_path_overrides, grammar_idx):
     """
     Perform the same procedures as 'process_line_containing_path()',
-    but also prepend "tm = " to the line if it was omitted.
+    but also replace the grammar path and pack if requested.
+
+    The grammar_idx is the index of this grammar in the list of
+    grammars found in the joshua config file, which makes it possible to
+    get the overridden path specified via a command-line option.
     """
-    line, operation = process_line_containing_path(line, orig_dir, dest_dir)
-    if not line_specifies_grammar(line):
-        line = 'tm = ' + line
+    to_pack = False
+    src_name = 
+    dest_name = 
+    src_path = 
+    dest_path = 
+    if idx < len(grammar_path_overrides):
+        # The grammar's source location was overridden in the CLI
+        # options.
+        original_src_path = parse_path(grammar_conf_line)
+        src_path = grammar_path_overrides[grammar_idx]
+        to_pack = type(src_path) is _PackGrammarPath
+
+    grammar_conf_line = grammar_conf_line.replace(original_src_path,
+                                                  dest_name)
+    if to_pack:
+        try:
+            line, operation = pack_grammer_operation(
+                grammar_conf_line, opts.orig_dir, opts.dest_dir,
+            )
+        except PathException as e:
+            # Prepend the grammar config to the error message
+            message = (
+                'ERROR: Grammar configuration "{0}" path error: {1}'
+                .format(grammar_conf_line, e.message)
+            )
+            e.message = message
+            raise e
+            else:
+                # Override the source grammar path, but don't pack the
+                # grammar.
+                try:
+                    line, operation = process_line_containing_grammar(
+                        grammar_conf_line, opts.orig_dir, opts.dest_dir
+                    )
+                except PathException as e:
+                    # Prepend the grammar config to the error message
+                    message = (
+                        'ERROR: Grammar configuration "{0}" path error: {1}'
+                        .format(grammar_conf_line, e.message)
+                    )
+                    e.message = message
+                    raise e
+                operations.append(operation)
+                result_config_lines.append(line)
+
     return line, operation
+
+
+
+class _PackGrammarPath(str):
+    """
+    Used when parsing command-line arguments to distinguish a grammar
+    to be packed from a grammar to be copied.
+    """
+    pass
 
 
 def handle_args(clargs):
@@ -465,25 +521,31 @@ def handle_args(clargs):
         help='optional additional or replacement configuration options for '
              'Joshua, all surrounded by one pair of quotes.'
     )
+
     parser.add_argument(
-        '--grammar', dest='grammars', action='append', default=[],
-        help=('each time this option is included, its argument is added to the '
-              'resulting config file. The grammar will NOT be packed.\n'
-              'Note: This will cause any grammar configurations in the config '
-              'file to be ignored.'
-              ),
+        '--grammar', dest='grammar_paths', action='append',
+        type=str,
+        help='specify a path to a grammar to use to override the source '
+             'directory of a grammar defined in the joshua config file. Each '
+             'time this option (or --pack-grammar) is included corresponds to '
+             'the next `tm = ...` entry in the joshua config file. '
     )
     parser.add_argument(
-        '--pack-grammar', dest='pack_grammars', action='append', default=[],
-        help='each time this option is included, its argument is added to the '
-             'resulting config file. THE GRAMMAR WILL BE PACKED.\n'
-             'Note: This will cause any grammar configurations in the config '
-             'file to be ignored.'
+        '--pack-grammar', dest='grammar_paths', action='append',
+        type=_PackGrammarPath,
+        help='specify a path to a grammar to use to override the source '
+             'directory of the corresponding grammar in the joshua config '
+             'file, just like the --grammar option, except that THE GRAMMAR '
+             'WILL BE PACKED, and the destination directory of the packed '
+             'grammar will be the source\s name appended with `.packed`. '
     )
+    parser.set_defaults(grammar_paths=[])
+
     parser.add_argument(
         '-v', '--verbose', action='store_true',
         help='print informational messages'
     )
+
     return parser.parse_args(clargs)
 
 
@@ -540,21 +602,30 @@ def collect_operations(opts):
     # Files to copy
     # Parse the joshua.config and collect copy operations
     result_config_lines = []
+    grammar_configs_count = 0
     for i, line in enumerate(config_lines):
         line_num = i + 1
 
-        # Ignore grammar configurations when grammars were specified on
-        # the command line.
-        if opts.grammars or opts.pack_grammars:
-            if line_specifies_grammar(line):
-                logging.info(
-                    'Skipping line {0} because other grammars were specified '
-                    'in command line options:\n    {1}'
-                    .format(line_num, line)
+        if line_specifies_grammar(line):
+            try:
+                line, operation = process_line_containing_grammar(
+                    line, opts.orig_dir, opts.dest_dir,
+                    opts.grammar_paths, grammar_configs_count
                 )
-                continue
+            except PathException as e:
+                # TODO: make this more appropriate for when the source
+                # path was overridden by a command-line option
+                message = (
+                    # Prepend the line number to the error message
+                    'ERROR: Configuration file "{0}" line {1}: {2}'
+                    .format(opts.config.name, line_num, e.message)
+                )
+                e.message = message
+                raise e
+            operations.append(operation)
+            grammar_configs_count += 1
 
-        if line_specifies_path(line):
+        elif line_specifies_path(line):
             try:
                 line, operation = process_line_containing_path(
                     line, opts.orig_dir, opts.dest_dir
@@ -568,46 +639,6 @@ def collect_operations(opts):
                 e.message = message
                 raise e
             operations.append(operation)
-        result_config_lines.append(line)
-
-    for grammar_conf_line in opts.grammars:
-        try:
-            line, operation = process_line_containing_grammar(
-                grammar_conf_line, opts.orig_dir, opts.dest_dir
-            )
-        except PathException as e:
-            # Prepend the grammar config to the error message
-            message = (
-                'ERROR: Grammar configuration "{0}" path error: {1}'
-                .format(grammar_conf_line, e.message)
-            )
-            e.message = message
-            raise e
-        operations.append(operation)
-        result_config_lines.append(line)
-
-    for grammar_conf_line in opts.pack_grammars:
-        try:
-            line, operation = pack_grammer_operation(
-                grammar_conf_line, opts.orig_dir, opts.dest_dir,
-            )
-        except PathException as e:
-            # Prepend the grammar config to the error message
-            message = (
-                'ERROR: Grammar configuration "{0}" path error: {1}'
-                .format(grammar_conf_line, e.message)
-            )
-            e.message = message
-            raise e
-        except PackingError as e:
-            # Prepend the grammar config to the error message
-            message = (
-                'ERROR: Grammar configuration "{0}" packing failed: {1}'
-                .format(grammar_conf_line, e.message)
-            )
-            e.message = message
-            raise e
-        operations.append(operation)
         result_config_lines.append(line)
 
     ###########################
@@ -685,4 +716,10 @@ if __name__ == "__main__":
 
 # TODO:
 #  - lineparts s/command/config/
-#  - automatically pack unpacked grammars
+#  - change name from --(pack-)grammar to --(pack-)tm
+#    Now the user's workflow involves reading the Joshua config, and matching
+#    up `tm = ` line entries with `--(pack-)tm` command line options.  E.g. If
+#    the the first grammar entry in joshua.config is a glue grammar, and it's
+#    already specified correctly, but the second entry needs to be packed
+#  - Put the (overridden) grammars back in their same location, instead of at
+#    the end.
