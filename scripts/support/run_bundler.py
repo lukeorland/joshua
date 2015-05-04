@@ -660,6 +660,15 @@ def collect_operations(opts):
         )
 
     #######################
+    # prepare.sh
+    path = os.path.join(opts.dest_dir, 'scripts')
+    operations.append(
+        (os.mkdir, (path,),
+         'Making the bundle runner subdirectory "scripts/"')
+    )
+
+
+    #######################
     # Write the README file
     path = os.path.join(opts.dest_dir, 'README')
     operations.append(
